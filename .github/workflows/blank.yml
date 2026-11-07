@@ -25,6 +25,11 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default package list includes the obsolete "tools" package,
+          # which current Android command-line tools no longer provide.
+          packages: |
+            platform-tools
 
       - name: Install Android build tools
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
