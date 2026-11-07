@@ -96,7 +96,7 @@ class MainActivity : Activity() {
         }, margin(top = 8))
 
         page.addView(button("Play") {
-            val selected = selectedVersionId())
+            val selected = selectedVersionId()
             val runtimeIndex = runtimeSpinner.selectedItemPosition.coerceIn(0, 3)
             preferences.selectedRuntime = runtimeIndex
             preferences.selectedVersion = selected
