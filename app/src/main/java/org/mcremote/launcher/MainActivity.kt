@@ -5,9 +5,11 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
@@ -15,13 +17,17 @@ import android.widget.TextView
 import android.widget.Toast
 import java.util.concurrent.Executors
 
-/** Initial UI for an on-device Minecraft: Java Edition launcher. */
 class MainActivity : Activity() {
     private val worker = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val preferences by lazy { LauncherPreferences(this) }
     private val releases = mutableListOf<VersionManifest.Version>()
     private lateinit var versionsAdapter: ArrayAdapter<String>
+    private lateinit var versionSpinner: Spinner
+    private lateinit var runtimeSpinner: Spinner
     private lateinit var versionStatus: TextView
+    private lateinit var profileSummary: TextView
+    private lateinit var profileNameInput: EditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,7 +49,7 @@ class MainActivity : Activity() {
         versionsAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, mutableListOf("Loading versions…")).also {
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
-        val versionSpinner = Spinner(this).apply {
+        versionSpinner = Spinner(this).apply {
             adapter = versionsAdapter
             setPadding(dp(12), dp(4), dp(12), dp(4))
             setBackgroundColor(Color.rgb(35, 49, 40))
@@ -54,23 +60,67 @@ class MainActivity : Activity() {
         page.addView(button("Refresh versions") { loadVersions() }, margin(top = 8))
 
         page.addView(sectionTitle("JAVA RUNTIME"), margin(top = 24))
-        val runtimeSpinner = spinner(listOf("Managed runtime (not installed)", "Java 21", "Java 17", "Java 8"))
+        val runtimeChoices = listOf("Managed runtime (not installed)", "Java 21", "Java 17", "Java 8")
+        runtimeSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, runtimeChoices)
+            setSelection(preferences.selectedRuntime.coerceIn(0, runtimeChoices.lastIndex))
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+            setBackgroundColor(Color.rgb(35, 49, 40))
+        }
         page.addView(runtimeSpinner, margin(top = 8))
-        page.addView(label("Modern Minecraft generally needs Java 21 or 17; older releases may need Java 8. Android requires a compatible runtime.", 14, Color.rgb(173, 187, 177)), margin(top = 8))
+        page.addView(label("Use a runtime that matches the selected version. Android builds still need a compatible ARM JVM and native launch support.", 14, Color.rgb(173, 187, 177)), margin(top = 8))
         page.addView(button("Runtime setup") {
-            Toast.makeText(this, "Android JVM installation is not implemented yet.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Android runtime installation is not implemented yet.", Toast.LENGTH_LONG).show()
         }, margin(top = 16))
 
         page.addView(sectionTitle("PROFILE"), margin(top = 24))
-        page.addView(label("Default profile", 16, Color.WHITE), margin(top = 8))
-        page.addView(label("Game files and saves stay in this app's private storage.", 14, Color.rgb(173, 187, 177)), margin(top = 4))
+        profileNameInput = EditText(this).apply {
+            setText(preferences.profileName)
+            hint = "Profile name"
+            inputType = InputType.TYPE_CLASS_TEXT
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.rgb(173, 187, 177))
+            setBackgroundColor(Color.rgb(35, 49, 40))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+        page.addView(profileNameInput, margin(top = 8))
+        profileSummary = label("No profile selected yet", 13, Color.rgb(225, 190, 120))
+        page.addView(profileSummary, margin(top = 8))
+
+        page.addView(button("Save profile") {
+            val name = profileNameInput.text?.toString()?.trim().orEmpty()
+            val newName = if (name.isNotBlank()) name else "Default"
+            preferences.profileName = newName
+            profileSummary.text = "Profile '${newName}' ready."
+            Toast.makeText(this, "Profile saved.", Toast.LENGTH_SHORT).show()
+        }, margin(top = 8))
+
         page.addView(button("Play") {
-            Toast.makeText(this, "Game runtime, authentication, and launch are not implemented yet.", Toast.LENGTH_LONG).show()
+            val selected = selectedVersionId())
+            val runtimeIndex = runtimeSpinner.selectedItemPosition.coerceIn(0, 3)
+            preferences.selectedRuntime = runtimeIndex
+            preferences.selectedVersion = selected
+            profileSummary.text = "Selected version: $selected • Java ${runtimeLabel(runtimeIndex)} • Profile: ${preferences.profileName}"
+            Toast.makeText(this, "Play is not implemented yet.", Toast.LENGTH_LONG).show()
         }, margin(top = 28))
-        page.addView(label("Release list is loaded from Mojang. This prototype does not download or run the game yet.", 13, Color.rgb(225, 190, 120)), margin(top = 12))
+        page.addView(label("Release selection is loaded from Mojang and stored in local preferences. Actual game startup still needs Android runtime + launcher logic.", 13, Color.rgb(225, 190, 120)), margin(top = 12))
 
         setContentView(scroll)
         loadVersions()
+    }
+
+    private fun selectedVersionId(): String =
+        if (versionSpinner.selectedItem is String && versionSpinner.selectedItem.toString().startsWith("1.")) {
+            versionSpinner.selectedItem.toString()
+        } else {
+            preferences.selectedVersion
+        }
+
+    private fun runtimeLabel(index: Int): String = when (index) {
+        0 -> "runtime not installed"
+        1 -> "21"
+        2 -> "17"
+        else -> "8"
     }
 
     private fun loadVersions() {
@@ -82,20 +132,20 @@ class MainActivity : Activity() {
                 result.onSuccess { fetched ->
                     releases.clear()
                     releases.addAll(fetched)
+                    val items = releases.map { it.id }
                     versionsAdapter.clear()
-                    versionsAdapter.addAll(releases.map { it.id })
+                    versionsAdapter.addAll(items)
                     versionsAdapter.notifyDataSetChanged()
-                    versionStatus.text = "${releases.size} latest stable releases from Mojang."
+                    val preferred = preferences.selectedVersion
+                    val selectedIndex = items.indexOf(preferred).coerceAtLeast(0)
+                    versionSpinner.setSelection(selectedIndex)
+                    versionStatus.text = "${items.size} stable versions loaded from Mojang."
+                    profileSummary.text = "Profile '${preferences.profileName}' • Current version: ${items[selectedIndex]}"
                 }.onFailure { error ->
                     versionStatus.text = "Could not load versions: ${error.message ?: "network error"}"
                 }
             }
         }
-    }
-
-    override fun onDestroy() {
-        worker.shutdownNow()
-        super.onDestroy()
     }
 
     private fun sectionTitle(text: String) = label(text, 12, Color.rgb(133, 216, 157), true)
@@ -105,12 +155,6 @@ class MainActivity : Activity() {
         textSize = size.toFloat()
         setTextColor(color)
         if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
-    }
-
-    private fun spinner(items: List<String>) = Spinner(this).apply {
-        adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, items)
-        setPadding(dp(12), dp(4), dp(12), dp(4))
-        setBackgroundColor(Color.rgb(35, 49, 40))
     }
 
     private fun button(text: String, action: () -> Unit) = Button(this).apply {
@@ -125,4 +169,9 @@ class MainActivity : Activity() {
     ).apply { topMargin = dp(top) }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    override fun onDestroy() {
+        worker.shutdownNow()
+        super.onDestroy()
+    }
 }

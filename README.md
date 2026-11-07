@@ -4,7 +4,14 @@ An Android launcher prototype for **Minecraft: Java Edition**, targeting on-devi
 
 ## Current state
 
-This Android Studio project currently provides a launcher UI and fetches the latest stable version IDs from Mojang's public version manifest. Network errors are shown in the app, and the user can refresh the list. This does **not** download game files or launch Minecraft yet.
+This Android Studio project now provides:
+- a launcher UI with version selection from Mojang's official release list
+- a Java runtime selector
+- profile name persistence in local app preferences
+- a summary for the selected profile, version, and runtime
+- error handling for version fetch failures
+
+This does **not** download game files or launch Minecraft yet.
 
 Still required for a playable launcher: an Android-compatible Java runtime, native/graphics integration, version-specific library and asset downloads, Microsoft authentication, game arguments, and process lifecycle management. A desktop JDK is not needed to play on the phone; the game needs an Android-compatible runtime appropriate for the selected game version.
 
