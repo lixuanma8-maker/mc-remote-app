@@ -15,6 +15,7 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import java.io.File
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
@@ -65,6 +66,21 @@ class MainActivity : Activity() {
         page.addView(metadataStatus, margin(top = 8))
         page.addView(button("Inspect selected version") { inspectSelectedVersion() }, margin(top = 8))
 
+        page.addView(sectionTitle("PROFILE"), margin(top = 24))
+        profileNameInput = EditText(this).apply {
+            setText(preferences.profileName)
+            hint = "Profile name"
+            inputType = InputType.TYPE_CLASS_TEXT
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.rgb(173, 187, 177))
+            setBackgroundColor(Color.rgb(35, 49, 40))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+        page.addView(profileNameInput, margin(top = 8))
+        profileSummary = label("No profile selected yet", 13, Color.rgb(225, 190, 120))
+        page.addView(profileSummary, margin(top = 8))
+        page.addView(button("Create profile folder") { createProfileFolder() }, margin(top = 8))
+
         page.addView(sectionTitle("JAVA RUNTIME"), margin(top = 24))
         val runtimeChoices = listOf("Managed runtime (not installed)", "Java 21", "Java 17", "Java 8")
         runtimeSpinner = Spinner(this).apply {
@@ -79,20 +95,6 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Android runtime installation is not implemented yet.", Toast.LENGTH_LONG).show()
         }, margin(top = 16))
 
-        page.addView(sectionTitle("PROFILE"), margin(top = 24))
-        profileNameInput = EditText(this).apply {
-            setText(preferences.profileName)
-            hint = "Profile name"
-            inputType = InputType.TYPE_CLASS_TEXT
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.rgb(173, 187, 177))
-            setBackgroundColor(Color.rgb(35, 49, 40))
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-        }
-        page.addView(profileNameInput, margin(top = 8))
-        profileSummary = label("No profile selected yet", 13, Color.rgb(225, 190, 120))
-        page.addView(profileSummary, margin(top = 8))
-
         page.addView(button("Save profile") {
             val name = profileNameInput.text?.toString()?.trim().orEmpty()
             val newName = if (name.isNotBlank()) name else "Default"
@@ -106,9 +108,13 @@ class MainActivity : Activity() {
             val runtimeIndex = runtimeSpinner.selectedItemPosition.coerceIn(0, 3)
             preferences.selectedRuntime = runtimeIndex
             preferences.selectedVersion = selected
-            profileSummary.text = "Selected version: $selected • Java ${runtimeLabel(runtimeIndex)} • Profile: ${preferences.profileName}"
+            val profileDir = preferences.ensureProfileDirectory()
+            val summary = "Selected version: $selected • Java ${runtimeLabel(runtimeIndex)} • Profile: ${preferences.profileName} • Directory: ${profileDir.absolutePath}"
+            preferences.saveLaunchSummary(summary)
+            profileSummary.text = summary
             Toast.makeText(this, "Game launch is not implemented yet.", Toast.LENGTH_LONG).show()
         }, margin(top = 28))
+
         page.addView(label("Version metadata is fetched from Mojang and its SHA-1 is checked against the official manifest. This verifies download integrity, not app safety. Game files and runtime are not downloaded, and Minecraft does not launch yet.", 13, Color.rgb(225, 190, 120)), margin(top = 12))
 
         setContentView(scroll)
@@ -170,11 +176,21 @@ class MainActivity : Activity() {
                     val java = details.javaMajorVersion?.toString() ?: "not specified"
                     val jarSize = details.clientJarSize?.let { "${it / (1024 * 1024)} MB" } ?: "not specified"
                     metadataStatus.text = "${details.id} (${details.type})\nJava: $java • Assets: ${details.assets}\nMain class: ${details.mainClass}\nLibraries: ${details.libraryCount} • Client JAR: $jarSize\nMojang metadata SHA-1 verified. No game files downloaded."
+                    preferences.saveLaunchSummary(metadataStatus.text.toString())
                 }.onFailure { error ->
                     metadataStatus.text = "Could not inspect version: ${error.message ?: "network error"}"
                 }
             }
         }
+    }
+
+    private fun createProfileFolder() {
+        val profileName = profileNameInput.text?.toString()?.trim().ifBlank { preferences.profileName }
+        val dir = preferences.ensureProfileDirectory(profileName)
+        val summary = "Profile folder ready: ${dir.absolutePath}"
+        preferences.profileName = profileName
+        profileSummary.text = summary
+        Toast.makeText(this, summary, Toast.LENGTH_LONG).show()
     }
 
     private fun sectionTitle(text: String) = label(text, 12, Color.rgb(133, 216, 157), true)
