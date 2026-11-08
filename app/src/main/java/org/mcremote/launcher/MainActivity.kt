@@ -26,6 +26,7 @@ class MainActivity : Activity() {
     private lateinit var versionSpinner: Spinner
     private lateinit var runtimeSpinner: Spinner
     private lateinit var versionStatus: TextView
+    private lateinit var metadataStatus: TextView
     private lateinit var profileSummary: TextView
     private lateinit var profileNameInput: EditText
 
@@ -58,6 +59,11 @@ class MainActivity : Activity() {
         versionStatus = label("Fetching official release list…", 13, Color.rgb(173, 187, 177))
         page.addView(versionStatus, margin(top = 8))
         page.addView(button("Refresh versions") { loadVersions() }, margin(top = 8))
+
+        page.addView(sectionTitle("VERSION DETAILS"), margin(top = 24))
+        metadataStatus = label("No version metadata inspected yet.", 14, Color.rgb(173, 187, 177))
+        page.addView(metadataStatus, margin(top = 8))
+        page.addView(button("Inspect selected version") { inspectSelectedVersion() }, margin(top = 8))
 
         page.addView(sectionTitle("JAVA RUNTIME"), margin(top = 24))
         val runtimeChoices = listOf("Managed runtime (not installed)", "Java 21", "Java 17", "Java 8")
@@ -101,9 +107,9 @@ class MainActivity : Activity() {
             preferences.selectedRuntime = runtimeIndex
             preferences.selectedVersion = selected
             profileSummary.text = "Selected version: $selected • Java ${runtimeLabel(runtimeIndex)} • Profile: ${preferences.profileName}"
-            Toast.makeText(this, "Play is not implemented yet.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Game launch is not implemented yet.", Toast.LENGTH_LONG).show()
         }, margin(top = 28))
-        page.addView(label("Release selection is loaded from Mojang and stored in local preferences. Actual game startup still needs Android runtime + launcher logic.", 13, Color.rgb(225, 190, 120)), margin(top = 12))
+        page.addView(label("Version metadata is fetched from Mojang and its SHA-1 is checked against the official manifest. This verifies download integrity, not app safety. Game files and runtime are not downloaded, and Minecraft does not launch yet.", 13, Color.rgb(225, 190, 120)), margin(top = 12))
 
         setContentView(scroll)
         loadVersions()
@@ -143,6 +149,29 @@ class MainActivity : Activity() {
                     profileSummary.text = "Profile '${preferences.profileName}' • Current version: ${items[selectedIndex]}"
                 }.onFailure { error ->
                     versionStatus.text = "Could not load versions: ${error.message ?: "network error"}"
+                }
+            }
+        }
+    }
+
+    private fun inspectSelectedVersion() {
+        val id = selectedVersionId()
+        val version = releases.firstOrNull { it.id == id }
+        if (version == null) {
+            metadataStatus.text = "Version list is not ready. Refresh it and try again."
+            return
+        }
+        metadataStatus.text = "Fetching and verifying Mojang metadata for $id…"
+        worker.execute {
+            val result = runCatching { VersionManifest.fetchDetails(version) }
+            mainHandler.post {
+                if (isFinishing || isDestroyed) return@post
+                result.onSuccess { details ->
+                    val java = details.javaMajorVersion?.toString() ?: "not specified"
+                    val jarSize = details.clientJarSize?.let { "${it / (1024 * 1024)} MB" } ?: "not specified"
+                    metadataStatus.text = "${details.id} (${details.type})\nJava: $java • Assets: ${details.assets}\nMain class: ${details.mainClass}\nLibraries: ${details.libraryCount} • Client JAR: $jarSize\nMojang metadata SHA-1 verified. No game files downloaded."
+                }.onFailure { error ->
+                    metadataStatus.text = "Could not inspect version: ${error.message ?: "network error"}"
                 }
             }
         }
