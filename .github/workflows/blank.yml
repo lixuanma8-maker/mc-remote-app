@@ -14,8 +14,10 @@ jobs:
     name: Build debug APK
     runs-on: ubuntu-latest
     steps:
-      - name: Check out source
+      - name: Check out launcher source
         uses: actions/checkout@v4
+        with:
+          ref: feat/android-java-edition-launcher
 
       - name: Set up Java
         uses: actions/setup-java@v4
