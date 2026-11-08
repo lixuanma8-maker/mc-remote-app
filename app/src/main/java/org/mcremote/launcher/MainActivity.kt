@@ -15,7 +15,6 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
-import java.io.File
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
@@ -30,6 +29,7 @@ class MainActivity : Activity() {
     private lateinit var metadataStatus: TextView
     private lateinit var profileSummary: TextView
     private lateinit var profileNameInput: EditText
+    private lateinit var downloadButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,6 +65,8 @@ class MainActivity : Activity() {
         metadataStatus = label("No version metadata inspected yet.", 14, Color.rgb(173, 187, 177))
         page.addView(metadataStatus, margin(top = 8))
         page.addView(button("Inspect selected version") { inspectSelectedVersion() }, margin(top = 8))
+        downloadButton = button("Download verified client JAR") { downloadSelectedVersion() }
+        page.addView(downloadButton, margin(top = 8))
 
         page.addView(sectionTitle("PROFILE"), margin(top = 24))
         profileNameInput = EditText(this).apply {
@@ -99,7 +101,7 @@ class MainActivity : Activity() {
             val name = profileNameInput.text?.toString()?.trim().orEmpty()
             val newName = if (name.isNotBlank()) name else "Default"
             preferences.profileName = newName
-            profileSummary.text = "Profile '${newName}' ready."
+            profileSummary.text = "Profile '$newName' ready."
             Toast.makeText(this, "Profile saved.", Toast.LENGTH_SHORT).show()
         }, margin(top = 8))
 
@@ -115,7 +117,7 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Game launch is not implemented yet.", Toast.LENGTH_LONG).show()
         }, margin(top = 28))
 
-        page.addView(label("Version metadata is fetched from Mojang and its SHA-1 is checked against the official manifest. This verifies download integrity, not app safety. Game files and runtime are not downloaded, and Minecraft does not launch yet.", 13, Color.rgb(225, 190, 120)), margin(top = 12))
+        page.addView(label("The client JAR is downloaded only from Mojang HTTPS hosts into app-private profile storage. Its SHA-1 and exact size are checked against the selected version metadata. Integrity verification does not certify this APK as safe. Libraries, assets, runtime, login, and game launch are not implemented.", 13, Color.rgb(225, 190, 120)), margin(top = 12))
 
         setContentView(scroll)
         loadVersions()
@@ -161,13 +163,8 @@ class MainActivity : Activity() {
     }
 
     private fun inspectSelectedVersion() {
-        val id = selectedVersionId()
-        val version = releases.firstOrNull { it.id == id }
-        if (version == null) {
-            metadataStatus.text = "Version list is not ready. Refresh it and try again."
-            return
-        }
-        metadataStatus.text = "Fetching and verifying Mojang metadata for $id…"
+        val version = findSelectedVersion() ?: return
+        metadataStatus.text = "Fetching and verifying Mojang metadata for ${version.id}…"
         worker.execute {
             val result = runCatching { VersionManifest.fetchDetails(version) }
             mainHandler.post {
@@ -175,8 +172,7 @@ class MainActivity : Activity() {
                 result.onSuccess { details ->
                     val java = details.javaMajorVersion?.toString() ?: "not specified"
                     val jarSize = details.clientJarSize?.let { "${it / (1024 * 1024)} MB" } ?: "not specified"
-                    metadataStatus.text = "${details.id} (${details.type})\nJava: $java • Assets: ${details.assets}\nMain class: ${details.mainClass}\nLibraries: ${details.libraryCount} • Client JAR: $jarSize\nMojang metadata SHA-1 verified. No game files downloaded."
-                    preferences.saveLaunchSummary(metadataStatus.text.toString())
+                    metadataStatus.text = "${details.id} (${details.type})\nJava: $java • Assets: ${details.assets}\nMain class: ${details.mainClass}\nLibraries: ${details.libraryCount} • Client JAR: $jarSize\nMojang metadata SHA-1 verified."
                 }.onFailure { error ->
                     metadataStatus.text = "Could not inspect version: ${error.message ?: "network error"}"
                 }
@@ -184,8 +180,48 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun downloadSelectedVersion() {
+        val version = findSelectedVersion() ?: return
+        downloadButton.isEnabled = false
+        metadataStatus.text = "Verifying Mojang version metadata for ${version.id}…"
+        worker.execute {
+            val result = runCatching {
+                val details = VersionManifest.fetchDetails(version)
+                ClientJarDownloader.download(details, preferences.ensureProfileDirectory()) { downloaded, expected ->
+                    val percent = if (expected > 0) (downloaded * 100 / expected).toInt() else 0
+                    mainHandler.post {
+                        if (!isFinishing && !isDestroyed) {
+                            metadataStatus.text = "Downloading ${details.id} client JAR: $percent% (${downloaded / (1024 * 1024)} / ${expected / (1024 * 1024)} MB)"
+                        }
+                    }
+                }
+            }
+            mainHandler.post {
+                if (isFinishing || isDestroyed) return@post
+                downloadButton.isEnabled = true
+                result.onSuccess { downloaded ->
+                    val message = "Verified client JAR saved: ${downloaded.file.absolutePath}\nSize: ${downloaded.bytes} bytes • SHA-1: ${downloaded.sha1}\nThis is not a playable install; libraries, assets, Java runtime, authentication, and launch are still missing."
+                    metadataStatus.text = message
+                    Toast.makeText(this, "Client JAR downloaded and hash verified.", Toast.LENGTH_LONG).show()
+                }.onFailure { error ->
+                    metadataStatus.text = "Download failed: ${error.message ?: "network error"}"
+                }
+            }
+        }
+    }
+
+    private fun findSelectedVersion(): VersionManifest.Version? {
+        val id = selectedVersionId()
+        val version = releases.firstOrNull { it.id == id }
+        if (version == null) {
+            metadataStatus.text = "Version list is not ready. Refresh it and try again."
+        }
+        return version
+    }
+
     private fun createProfileFolder() {
-        val profileName = profileNameInput.text?.toString()?.trim().ifBlank { preferences.profileName }
+        val entered = profileNameInput.text?.toString()?.trim().orEmpty()
+        val profileName = entered.ifBlank { preferences.profileName }
         val dir = preferences.ensureProfileDirectory(profileName)
         val summary = "Profile folder ready: ${dir.absolutePath}"
         preferences.profileName = profileName
